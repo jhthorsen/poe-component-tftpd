@@ -1,0 +1,96 @@
+NAME
+    POE::Component::TFTPd - Starts a tftp-server, through POE
+
+VERSION
+    0.01
+
+METHODS
+  create(%args)
+    Component constructor.
+
+    Args:
+
+     address
+     port
+     timeout
+     retries
+     alias
+
+  check_connections
+    Checks for connections that have timed out, and destroys them.
+
+  prepare_packet($client)
+    Reads a some data, using "$client->read_data" and sends it to
+    send_data()
+
+  send_data($client, $data)
+    Sends data to the client.
+
+  send_error($client, $error_key)
+    Sends an error to the client.
+
+  input
+    Takes some input, and pass it on to either "new_connection" or
+    "decode()", dependent if the client exists or not.
+
+  new_connection
+    Creates a new client-object, and puts it into the "$self->clients" hash.
+
+  decode
+    Decodes the messages from the client. It can only handle ACKs for now.
+
+  clients
+    Returns a hash-ref, containing all the clients:
+
+     $client_id => $client_obj
+
+  server
+    Returns the server.
+
+  retries
+    Pointer to the number of retries:
+
+     print $self->retries;
+     $self->retries = 4;
+
+  timeout
+    Pointer to the timeout in seconds:
+
+     print $self->timeout;
+     $self->timeout = 4;
+
+  log($level, $client, $msg)
+    Logs information.
+
+FUNCTIONS
+  TFTP_MIN_BLKSIZE
+  TFTP_MAX_BLKSIZE
+  TFTP_MIN_TIMEOUT
+  TFTP_MAX_TIMEOUT
+  TFTP_DEFAULT_PORT
+  TFTP_OPCODE_RRQ
+  TFTP_OPCODE_WRQ
+  TFTP_OPCODE_DATA
+  TFTP_OPCODE_ACK
+  TFTP_OPCODE_ERROR
+  TFTP_OPCODE_OACK
+TODO
+     * Handle more than ACK messages.
+
+AUTHOR
+    Jan Henning Thorsen, "<pm at flodhest.net>"
+
+SUPPORT
+    You can find documentation for this module with the perldoc command.
+
+        perldoc POE::Component::TFTPd
+
+    You can also look for information at: <http://trac.flodhest.net/pm>
+
+ACKNOWLEDGEMENTS
+COPYRIGHT & LICENSE
+    Copyright 2007 Jan Henning Thorsen, all rights reserved.
+
+    This program is free software; you can redistribute it and/or modify it
+    under the same terms as Perl itself.
+

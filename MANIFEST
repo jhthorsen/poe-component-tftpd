@@ -1,0 +1,9 @@
+Makefile.PL
+README
+MANIFEST
+Changes
+LICENSE
+lib/POE/Component/TFTPd.pm
+lib/POE/Component/TFTPd/Client.pm
+t/002_load_yml.t
+t/001_load.t
