@@ -20,9 +20,12 @@ sub check_connections { #=====================================================
     for my $client (values %$clients) {
         if($client->retries <= 0) {
             delete $clients->{ $client->id };
+            $self->log(info => $client, 'timeout');
         }
         if($client->timestamp < time - $self->timeout) {
             $client->retries--;
+            $self->log(trace => $client, 'retry');
+            $kernel->yield(prepare_packet => $client);
         }
     }
 
@@ -91,15 +94,14 @@ sub prepare_packet { #========================================================
 
     ### need to get last ack, before sending more data
     if($client->last_ack < $client->block_count) {
-        $self->log(trace => $client, 'waiting for ack...');
+        $self->log(trace => $client, 'waiting for ack');
         $kernal->yield(prepare_packet => $client);
         return;
     }
 
-    ### send data
-    if(my $data = $client->read_data) {
-        $kernel->yield(send_data => $client, $data);
-    }
+    ### get data and hopefully a postback to this session
+    $self->get_data->($client);
+    return;
 }
 
 sub decode { #================================================================
@@ -159,7 +161,7 @@ sub new_connection { #========================================================
     ### too many connections
     if(my $n = $self->{'max_connections'}) {
         if(int keys %{ $self->clients } > $n) {
-            $self->log($client, 'too many connections');
+            $self->log(error => $client, 'too many connections');
             return;
         }
     }
@@ -179,23 +181,54 @@ sub new_connection { #========================================================
 sub input { #=================================================================
 
     my $kernel    = $_[KERNEL];
-    my $input     = $_[ARG0];
-    my $client_id = join ":", $input->{'address'}, $input->{'port'};
+    my $args      = $_[ARG0];
+    my $client_id = join ":", $args->{'address'}, $args->{'port'};
     my $client    = $self->clients->{$client_id};
 
     ### new connection
     unless($client) {
-        $client = POE::Component::TFTPd::Client->new($input);
+        $client = POE::Component::TFTPd::Client->new($args);
         $self->clients->{$client_id} = $client;
-        $kernel->yield(new_connection => $client, $input->{'payload'});
+        $kernel->yield(new_connection => $client, $args->{'payload'});
     }
 
     ### existing connection
     else {
-        $kernel->yield(decode => $client, $input->{'payload'});
+        $kernel->yield(decode => $client, $args->{'payload'});
     }
 
     return;
+}
+
+sub start { #=================================================================
+
+    my $self   = $_[OBJECT];
+    my $kernel = $_[KERNEL];
+    my $sender = $_[SENDER];
+    my $events = $self->{'events'};
+
+    ### set default events
+    $events->{'log'}      ||= 'log';
+    $events->{'get_data'} ||= 'get_data';
+
+    $self->{'_log'}      = sub { $kernel->post(
+                               $sender, $events->{'log'} => @_
+                           ) };
+    $self->{'_get_data'} = sub { $kernel->post(
+                               $sender, $events->{'get_data'} => @_
+                           ) };
+    $self->{'_server'}   = POE::Wheel::UDP->new(
+                               Filter     => $filter,
+                               LocalAddr  => $self->{'localaddr'},
+                               LocalPort  => $self->{'port'},
+                               InputEvent => 'input',
+                           );
+
+    return;
+}
+
+sub stop { #==================================================================
+    return delete $_[OBJECT]->{'_server'};
 }
 
 sub create { #================================================================
@@ -219,59 +252,22 @@ sub create { #================================================================
         inline_states => {
             _start => sub {
                 my $kernel = $_[KERNEL];
-
-                $self->{'_server'} = POE::Wheel::UDP->new(
-                                         Filter     => $filter,
-                                         LocalAddr  => $self->{'localaddr'},
-                                         LocalPort  => $self->{'port'},
-                                         InputEvent => 'input',
-                                    );
-
                 $kernel->alias_set($self->{'alias'});
                 $kernel->delay(check_connections => 1);
             },
         },
         object_states => [
             $self => [ qw/
-                new_connection check_connections input log send_packet
+                start           stop
+                new_connection  check_connections
+                input           decode
+                send_data       send_error
+                prepare_packet 
             / ],
         ],
     );
 
     return $self;
-}
-
-sub clients { #===============================================================
-    return shift->{'_clients'};
-}
-
-sub server { #================================================================
-    return shift->{'_server'};
-}
-
-sub retries :lvalue { #=======================================================
-    shift->{'retries'};
-}
-
-sub timeout :lvalue { #=======================================================
-    shift->{'timeout'};
-}
-
-sub log { #===================================================================
-
-    my $self   = shift;
-    my $level  = shift;
-    my $client = shift;
-    my $msg    = shift;
-
-    printf(STDERR "%s - %s:%i %s\n",
-        $level,
-        $client->address,
-        $client->port,
-        $msg,
-    );
-
-    return $msg;
 }
 
 sub TFTP_MIN_BLKSIZE  { return 512;  }
@@ -285,6 +281,19 @@ sub TFTP_OPCODE_DATA  { return 3;    }
 sub TFTP_OPCODE_ACK   { return 4;    }
 sub TFTP_OPCODE_ERROR { return 5;    }
 sub TFTP_OPCODE_OACK  { return 6;    }
+
+BEGIN {
+    my @lvalue = qw/retries timeout/;
+    my @get    = qw/clients server get_data log/;
+
+    for(@lvalue) {
+        *$_ = sub :lvalue { shift->{$_} };
+    }
+
+    for(@get) {
+        *$_ = sub { return shift->{"_$_"} };
+    }
+}
 
 #=============================================================================
 1983;
@@ -306,40 +315,15 @@ Component constructor.
 
 Args:
 
- address
- port
- timeout
- retries
- alias
-
-=head2 check_connections
-
-Checks for connections that have timed out, and destroys them.
-
-=head2 prepare_packet($client)
-
-Reads a some data, using C<$client-E<gt>read_data> and sends it to send_data()
-
-=head2 send_data($client, $data)
-
-Sends data to the client.
-
-=head2 send_error($client, $error_key)
-
-Sends an error to the client.
-
-=head2 input
-
-Takes some input, and pass it on to either C<new_connection> or C<decode()>,
-dependent if the client exists or not.
-
-=head2 new_connection
-
-Creates a new client-object, and puts it into the C<$self-E<gt>clients> hash.
-
-=head2 decode
-
-Decodes the messages from the client. It can only handle ACKs for now.
+ address =>
+ port    =>
+ timeout =>
+ retries =>
+ alias   => 
+ events  => {
+    log      =>
+    get_data => 
+ },
 
 =head2 clients
 
@@ -365,10 +349,68 @@ Pointer to the timeout in seconds:
  print $self->timeout;
  $self->timeout = 4;
 
+=head2 get_data
 
-=head2 log($level, $client, $msg)
+Calls the SENDER with event name C<$arg-E<gt>{'events'}{'get_data'}>
+and $client as $_[ARG0].
 
-Logs information.
+The SENDER should then post back:
+
+ $kernel->post($alias => $client, $data);
+
+=head2 log
+
+Calls the SENDER with event name C<$arg-E<gt>{'events'}{'log'}> and these
+arguments:
+
+  $_[ARG0] = $level
+  $_[ARG1] = $client
+  $_[ARG2] = $msg
+
+C<$level> is the same as C<Log::Log4perl> use
+
+=head1 EVENTS
+
+=head2 start
+
+Starts the server, by setting up:
+
+ * POE::Wheel::UDP
+ * Postback for logging
+ * Postback for getting data
+
+=head2 stop
+
+Stops the TFTPd server.
+
+=head2 check_connections
+
+Checks for connections that have timed out, and destroys them.
+
+=head2 prepare_packet($client)
+
+Reads a some data, using C<get_data()>.
+
+=head2 send_data($client, $data)
+
+Sends data to the client.
+
+=head2 send_error($client, $error_key)
+
+Sends an error to the client.
+
+=head2 input
+
+Takes some input, and pass it on to either C<new_connection()> or C<decode()>,
+dependent if the client exists or not.
+
+=head2 new_connection
+
+Creates a new client-object, and puts it into the C<$self-E<gt>clients> hash.
+
+=head2 decode
+
+Decodes the messages from the client. It can only handle ACKs for now.
 
 =head1 FUNCTIONS
 
