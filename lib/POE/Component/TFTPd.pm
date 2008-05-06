@@ -13,8 +13,9 @@ our $VERSION = '0.01';
 
 sub check_connections { #=====================================================
 
+    my $self    = $_[OBJECT];
     my $kernel  = $_[KERNEL];
-    my $clients = $_[OBJECT]->clients;
+    my $clients = $self->clients;
 
     CLIENT:
     for my $client (values %$clients) {
@@ -42,29 +43,30 @@ sub send_error { #============================================================
         mode_not_supported => [0, 'Transfere mode is not supported'],
     };
 
-    $self->log(error => $client, $errors->{$err}[1]);
+    $self->log(error => $client, $errors->{$err}[1] || $err);
 
     delete $self->clients->{$client->id};
  
-    return $self->server->put(
+    return $self->server->put({
         addr    => $client->address,
         port    => $client->port,
         payload => pack("nnZ*", &TFTP_OPCODE_ERROR, @{ $errors->{$err} }),
-    );
+    });
 }
 
 sub send_data { #=============================================================
 
+    my $self   = $_[OBJECT];
     my $client = $_[ARG0];
     my $data   = $_[ARG1];
     my $n      = $client->last_ack + 1;
  
     ### send data
-    my $bytes = $_[OBJECT]->server->put(
+    my $bytes = $_[OBJECT]->server->put({
         addr    => $client->address,
         port    => $client->port,
         payload => pack("nna*", &TFTP_OPCODE_DATA, $n, $data),
-    );
+    });
 
     ### success
     if($bytes) {
@@ -95,17 +97,18 @@ sub prepare_packet { #========================================================
     ### need to get last ack, before sending more data
     if($client->last_ack < $client->block_count) {
         $self->log(trace => $client, 'waiting for ack');
-        $kernal->yield(prepare_packet => $client);
+        $kernel->yield(prepare_packet => $client);
         return;
     }
 
     ### get data and hopefully a postback to this session
-    $self->get_data->($client);
+    $self->get_data($client);
     return;
 }
 
 sub decode { #================================================================
 
+    my $self    = $_[OBJECT];
     my $kernel  = $_[KERNEL];
     my $client  = $_[ARG0];
     my $payload = $_[ARG1];
@@ -156,7 +159,7 @@ sub new_connection { #========================================================
 
     my $self    = $_[OBJECT];
     my $client  = $_[ARG0];
-    my $payload = $_[ARG1];
+    my $payload = join "", @{ $_[ARG1] };
 
     ### too many connections
     if(my $n = $self->{'max_connections'}) {
@@ -175,19 +178,23 @@ sub new_connection { #========================================================
     $client->filename($file);
     $client->timestamp(time);
 
+    $self->log(info  => $client, "connection established");
+    $self->log(trace => $client, "$opcode|$file|$mode");
+
     return;
 }
 
 sub input { #=================================================================
 
+    my $self      = $_[OBJECT];
     my $kernel    = $_[KERNEL];
     my $args      = $_[ARG0];
-    my $client_id = join ":", $args->{'address'}, $args->{'port'};
+    my $client_id = join ":", $args->{'addr'}, $args->{'port'};
     my $client    = $self->clients->{$client_id};
 
     ### new connection
     unless($client) {
-        $client = POE::Component::TFTPd::Client->new($args);
+        $client = POE::Component::TFTPd::Client->new($self, $args);
         $self->clients->{$client_id} = $client;
         $kernel->yield(new_connection => $client, $args->{'payload'});
     }
@@ -208,17 +215,13 @@ sub start { #=================================================================
     my $events = $self->{'events'};
 
     ### set default events
-    $events->{'log'}      ||= 'log';
-    $events->{'get_data'} ||= 'get_data';
+    my $log      = $events->{'log'}      || 'log';
+    my $get_data = $events->{'get_data'} || 'get_data';
 
-    $self->{'_log'}      = sub { $kernel->post(
-                               $sender, $events->{'log'} => @_
-                           ) };
-    $self->{'_get_data'} = sub { $kernel->post(
-                               $sender, $events->{'get_data'} => @_
-                           ) };
+    $self->{'_log'}      = sub { $kernel->post($sender, $log      => @_) };
+    $self->{'_get_data'} = sub { $kernel->post($sender, $get_data => @_) };
     $self->{'_server'}   = POE::Wheel::UDP->new(
-                               Filter     => $filter,
+                               Filter     => POE::Filter::Stream->new,
                                LocalAddr  => $self->{'localaddr'},
                                LocalPort  => $self->{'port'},
                                InputEvent => 'input',
@@ -233,14 +236,14 @@ sub stop { #==================================================================
 
 sub create { #================================================================
 
-    my $class  = shift;
-    my %args   = shift;
-    my $self   = bless \%args, $class;
-    my $filter = POE::Filter::Stream->new;
+    my $class = shift;
+    my %args  = @_;
+    my $self  = bless \%args, $class;
 
-    $self->{'_clients'} = {};
-    $self->{'_server'}  = undef;
-    $self->{'alias'}  ||= 'TFTPd';
+    $self->{'alias'}   ||= 'TFTPd';
+    $self->{'timeout'} ||= 60;
+    $self->{'retries'} ||= 10;
+    $self->{'_clients'}  = {};
 
     ### check required args
     unless($self->{'localaddr'} and $self->{'port'}) {
@@ -270,6 +273,8 @@ sub create { #================================================================
     return $self;
 }
 
+sub get_data          { my $o=shift; $o->{'_get_data'}->(@_) }
+sub log               { my $o=shift; $o->{'_log'}->(@_) }
 sub TFTP_MIN_BLKSIZE  { return 512;  }
 sub TFTP_MAX_BLKSIZE  { return 1428; }
 sub TFTP_MIN_TIMEOUT  { return 1;    }
@@ -283,15 +288,17 @@ sub TFTP_OPCODE_ERROR { return 5;    }
 sub TFTP_OPCODE_OACK  { return 6;    }
 
 BEGIN {
-    my @lvalue = qw/retries timeout/;
-    my @get    = qw/clients server get_data log/;
+    no strict 'refs';
 
-    for(@lvalue) {
-        *$_ = sub :lvalue { shift->{$_} };
+    my @lvalue = qw/retries timeout/;
+    my @get    = qw/clients server/;
+
+    for my $sub (@lvalue) {
+        *$sub = sub :lvalue { shift->{$sub} };
     }
 
-    for(@get) {
-        *$_ = sub { return shift->{"_$_"} };
+    for my $sub (@get) {
+        *$sub = sub { return shift->{"_$sub"} };
     }
 }
 

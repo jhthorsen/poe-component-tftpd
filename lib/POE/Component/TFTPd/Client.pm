@@ -8,28 +8,38 @@ use warnings;
 
 sub new { #===================================================================
 
-    my $class = shift;
-    my %args  = @_;
+    my $class  = shift;
+    my $tftpd  = shift;
+    my $client = shift;
 
-    return bless \%args, $class;
-}
-
-sub read_data { #=============================================================
-    die "read_data() should be overriden";
+    return bless {
+        id          => join(":", $client->{'addr'}, $client->{'port'}),
+        address     => $client->{'addr'},
+        port        => $client->{'port'},
+        timestamp   => time,
+        retries     => $tftpd->retries,
+        block_size  => &POE::Component::TFTPd::TFTP_MAX_BLKSIZE,
+        last_ack    => 0,
+        last_block  => 0,
+        block_count => 0,
+        filesize    => 0,
+        filename    => q(),
+        filehandle  => undef,
+    }, $class;
 }
 
 BEGIN { #=====================================================================
-    no strict;
+    no strict 'refs';
 
     my @set = qw/
-        address     port      timestamp
-        completed   opcode    mode
-        block_size  last_ack  last_block  payload
-        filename    filesize  filehandle
-        block_count retries
+        id           address   port
+        timestamp    retries
+        opcode       mode
+        block_size   last_ack  last_block  block_count
+        filename     filesize  filehandle
     /;
 
-    for $sub (@set) {
+    for my $sub (@set) {
         *$sub = sub :lvalue { shift->{$sub} };
     }
 }
