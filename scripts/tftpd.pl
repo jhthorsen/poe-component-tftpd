@@ -13,20 +13,41 @@ my $alias     = 'TFTPd';
 
 POE::Session->create(
     inline_states => {
-        _start => \&start,
-        get    => \&get,
-        log    => \&logger,
+        _start     => \&start,
+        tftpd_init => \&init,
+        tftpd_send => \&send,
+        tftpd_log  => \&logger,
     },
 );
 
 exit POE::Kernel->run;
 
-sub get { #===================================================================
 
+sub init { #==================================================================
+    my $client = $_[ARG0];
+    open(my $fh, "<", "$FindBin::Bin/tftpd.pl");
+    $client->{'fh'} = $fh;
+}
+
+sub send { #==================================================================
+
+    my $self   = $_[OBJECT];
     my $kernel = $_[KERNEL];
     my $client = $_[ARG0];
 
-    $kernel->post($alias => 'send_data' => 'foo');
+    seek $client->{'fh'}, 0, $client->last_ack * $client->block_size;
+    read $client->{'fh'}, my $data, $client->block_size;
+
+    ### send data
+    if($data) {
+        $kernel->post($alias => send_data => $client, $data);
+    }
+
+    ### no more to send
+    else {
+        $kernel->post($alias => completed => $client);
+    }
+
     return;
 }
 
@@ -39,8 +60,8 @@ sub logger { #================================================================
     if(ref $client) {
         warn(sprintf "%s - %s:%i - %s\n",
             $level,
-            $client->{'address'},
-            $client->{'port'},
+            $client->address,
+            $client->port,
             $msg,
         );
     }
@@ -59,10 +80,6 @@ sub start { #=================================================================
         localaddr => $localaddr,
         port      => $port,
         alias     => $alias,
-        states    => {
-            log      => 'log',
-            get_data => 'get',
-        },
     );
 
     logger(info => undef, 'Starting server');
@@ -70,3 +87,4 @@ sub start { #=================================================================
 
     return;
 }
+

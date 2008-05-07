@@ -5,6 +5,28 @@ package POE::Component::TFTPd::Client;
 
 use strict;
 use warnings;
+use vars qw/$AUTOLOAD/;
+use POE::Component::TFTPd;
+
+my %defaults = (
+    _id           => undef,
+    _address      => undef,
+    _port         => undef,
+    _retries      => 0,
+    _timestamp    => 0,
+    _last_ack     => 0,
+    _block_size   => 0,
+    _opcode       => 0,
+    _filename     => q(),
+    _mode         => q(),
+    _rfc          => [],
+);
+
+for my $key (keys %defaults) {
+    no strict 'refs';
+    my($sub) = $key =~ /_(\w+)/;
+    *$sub    = sub :lvalue { shift->{$key} };
+}
 
 sub new { #===================================================================
 
@@ -13,36 +35,15 @@ sub new { #===================================================================
     my $client = shift;
 
     return bless {
-        id          => join(":", $client->{'addr'}, $client->{'port'}),
-        address     => $client->{'addr'},
-        port        => $client->{'port'},
-        timestamp   => time,
-        retries     => $tftpd->retries,
-        block_size  => &POE::Component::TFTPd::TFTP_MAX_BLKSIZE,
-        last_ack    => 0,
-        last_block  => 0,
-        block_count => 0,
-        filesize    => 0,
-        filename    => q(),
-        filehandle  => undef,
+        %defaults,
+        _id         => join(":", $client->{'addr'}, $client->{'port'}),
+        _address    => $client->{'addr'},
+        _port       => $client->{'port'},
+        _block_size => POE::Component::TFTPd::TFTP_MIN_BLKSIZE(),
+        _retries    => $tftpd->retries,
     }, $class;
 }
 
-BEGIN { #=====================================================================
-    no strict 'refs';
-
-    my @set = qw/
-        id           address   port
-        timestamp    retries
-        opcode       mode
-        block_size   last_ack  last_block  block_count
-        filename     filesize  filehandle
-    /;
-
-    for my $sub (@set) {
-        *$sub = sub :lvalue { shift->{$sub} };
-    }
-}
 
 #=============================================================================
 1983;
@@ -58,41 +59,17 @@ See POE::Component::TFTPd
 
 =head2 new
 
-=head2 read_data
-
-=head2 address
-
-=head2 port
-
-=head2 timestamp
-
-=head2 completed
-
-=head2 opcode
-
-=head2 mode
-
-=head2 block_size
-
-=head2 last_ack
-
-=head2 last_block
-
-=head2 payload
-
-=head2 filename
-
-=head2 filesize
-
-=head2 filehandle
-
-=head2 block_count
-
-=head2 retries
-
-=head1 TODO
-
- * Setup a default read_data() method that read plain files from disk
+  id           => undef,
+  address      => undef,
+  port         => undef,
+  retries      => 0,
+  timestamp    => 0,
+  last_ack     => 0,
+  block_size   => 0,
+  opcode       => 0,
+  filename     => q(),
+  mode         => q(),
+  rfc          => [],
 
 =head1 AUTHOR
 

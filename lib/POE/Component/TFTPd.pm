@@ -9,9 +9,21 @@ use POE::Component::TFTPd::Client;
 use POE qw/Wheel::UDP Filter::Stream/;
 
 our $VERSION = '0.01';
+our %TFTP_ERROR = (
+    not_defined         => [0, "Not defined, see error message"],
+    unknown_opcode      => [0, "Unknown opcode: %s"],
+    no_connection       => [0, "No connection"],
+    file_not_found      => [1, "File not found"],
+    access_violation    => [2, "Access violation"],
+    disk_full           => [3, "Disk full or allocation exceeded"],
+    illegal_operation   => [4, "Illegal TFTP operation"],
+    unknown_transfer_id => [5, "Unknown transfer ID"],
+    file_exists         => [6, "File already exists"],
+    no_suck_user        => [7, "No such user"],
+);
 
 
-sub check_connections { #=====================================================
+sub check { #=================================================================
 
     my $self    = $_[OBJECT];
     my $kernel  = $_[KERNEL];
@@ -26,143 +38,89 @@ sub check_connections { #=====================================================
         if($client->timestamp < time - $self->timeout) {
             $client->retries--;
             $self->log(trace => $client, 'retry');
-            $kernel->yield(prepare_packet => $client);
+            $kernel->post($self->sender => tftpd_send => $client);
         }
     }
 
     ### check again later
     $kernel->delay(check_connections => 1);
+
+    return;
 }
 
 sub send_error { #============================================================
 
     my $self   = $_[OBJECT];
     my $client = $_[ARG0];
-    my $err    = $_[ARG1];
-    my $errors = {
-        mode_not_supported => [0, 'Transfere mode is not supported'],
-    };
+    my $key    = $_[ARG1];
+    my $args   = $_[ARG2] || [];
+    my $error  = $TFTP_ERROR{$key} || $TFTP_ERROR{'not_defined'};
 
-    $self->log(error => $client, $errors->{$err}[1] || $err);
-
+    $self->log(error => $client, sprintf($error->[1], @$args));
     delete $self->clients->{$client->id};
  
-    return $self->server->put({
+    $self->server->put({
         addr    => $client->address,
         port    => $client->port,
-        payload => pack("nnZ*", &TFTP_OPCODE_ERROR, @{ $errors->{$err} }),
+        payload => [pack("nnZ*", &TFTP_OPCODE_ERROR, @$error)],
     });
+
+    return;
 }
 
 sub send_data { #=============================================================
 
     my $self   = $_[OBJECT];
+    my $kernel = $_[KERNEL];
     my $client = $_[ARG0];
     my $data   = $_[ARG1];
     my $n      = $client->last_ack + 1;
- 
+
     ### send data
-    my $bytes = $_[OBJECT]->server->put({
+    my $bytes = $self->server->put({
         addr    => $client->address,
         port    => $client->port,
-        payload => pack("nna*", &TFTP_OPCODE_DATA, $n, $data),
+        payload => [pack("nna*", &TFTP_OPCODE_DATA, $n, $data)],
     });
 
     ### success
     if($bytes) {
-        $self->log(warning => $client, 'error sending data');
-        $client->seek_pos($client->seek_to);
-        $client->block_count++;
+        $self->log(trace => $client, "packet $n transmitted");
+        $client->retries   = $self->retries;
+        $client->timestamp = time;
     }
 
     ### error
-    else {
-        $self->log(warning => $client, 'error sending data');
+    elsif($client->retries) {
         $client->retries--;
+        $self->log(warning => $client, "failed to transmit packet $n");
+        $kernel->yield(send_data => $client, $data);
     }
+
+    return;
 }
 
-sub prepare_packet { #========================================================
+sub completed { #=============================================================
 
     my $self   = $_[OBJECT];
     my $kernel = $_[KERNEL];
     my $client = $_[ARG0];
 
-    ### this server only supports OCTET mode
-    if($client->mode ne 'OCTET') {
-        $kernel->yield(send_error => $client, 'mode_not_supported');
-        return;
-    }
-
-    ### need to get last ack, before sending more data
-    if($client->last_ack < $client->block_count) {
-        $self->log(trace => $client, 'waiting for ack');
-        $kernel->yield(prepare_packet => $client);
-        return;
-    }
-
-    ### get data and hopefully a postback to this session
-    $self->get_data($client);
-    return;
-}
-
-sub decode { #================================================================
-
-    my $self    = $_[OBJECT];
-    my $kernel  = $_[KERNEL];
-    my $client  = $_[ARG0];
-    my $payload = $_[ARG1];
-
-    ### decode the message
-    my($opcode, $datagram) = unpack("na*", $payload);
-
-    ### ACK
-    if($opcode eq &TFTP_OPCODE_ACK) {
-        my $this_ACK      = unpack("n", $datagram);
-        $client->last_ack = $this_ACK;
-
-        ### done
-        if($this_ACK == $client->last_block) {
-            $self->log(info => $client, 'completed');
-            delete $self->clients->{ $client->id };
-        }
-
-        ### more acks than expected
-        elsif($this_ACK > $client->last_block) {
-            $self->log(warning => $client, 'ack overflow');
-            delete $self->clients->{ $client->id };
-        }
-
-        ### normal ack
-        else {
-            $self->log(trace => $client, "ack# $this_ACK");
-            $client->timestamp = time;
-            $client->retries   = $self->retries;
-            $kernel->yield(prepare_packet => $client);
-        }
-    }
-
-    ### error
-    elsif($opcode eq &TFTP_OPCODE_ERROR) {
-        $self->log(error => sprintf "client-error: %s", $datagram);
-    }
-
-    ### other
-    else {
-        $self->log(error => sprintf "client-error: %s", $datagram);
-    }
+    $self->log(trace => $client, 'client completed');
+    delete $self->clients->{ $client->id };
 
     return;
 }
 
-sub new_connection { #========================================================
+sub init_request { #==========================================================
 
-    my $self    = $_[OBJECT];
-    my $client  = $_[ARG0];
-    my $payload = join "", @{ $_[ARG1] };
+    my $self     = $_[OBJECT];
+    my $kernel   = $_[KERNEL];
+    my $client   = $_[ARG0];
+    my $datagram = $_[ARG1];
 
     ### too many connections
-    if(my $n = $self->{'max_connections'}) {
+    if(my $n = $self->max_connections) {
         if(int keys %{ $self->clients } > $n) {
             $self->log(error => $client, 'too many connections');
             return;
@@ -170,16 +128,21 @@ sub new_connection { #========================================================
     }
 
     ### decode input
-    my($opcode, $datagram) = unpack("na*", $payload);
     my($file, $mode, @rfc) = split("\0", $datagram);
 
-    $client->opcode($opcode);
-    $client->mode(uc $mode);
-    $client->filename($file);
-    $client->timestamp(time);
+    $client->filename  = $file;
+    $client->mode      = uc $mode;
+    $client->rfc       = \@rfc;
+    $client->timestamp = time;
 
-    $self->log(info  => $client, "connection established");
-    $self->log(trace => $client, "$opcode|$file|$mode");
+    ### this server only supports OCTET mode
+    if($client->mode ne 'OCTET') {
+        $self->log(error => $client, 'mode not supported');
+        $kernel->yield(send_error => $client, 'illegal_operation');
+        return;
+    }
+
+    $self->log(info => $client, "rrw/rrq $file");
 
     return;
 }
@@ -192,16 +155,37 @@ sub input { #=================================================================
     my $client_id = join ":", $args->{'addr'}, $args->{'port'};
     my $client    = $self->clients->{$client_id};
 
-    ### new connection
-    unless($client) {
+    my($opcode, $datagram) = unpack "na*", shift @{ $args->{'payload'} };
+
+    if($opcode eq &TFTP_OPCODE_RRQ or $opcode eq &TFTP_OPCODE_WRQ) {
         $client = POE::Component::TFTPd::Client->new($self, $args);
         $self->clients->{$client_id} = $client;
-        $kernel->yield(new_connection => $client, $args->{'payload'});
+        $kernel->yield(init_request => $client, $datagram);
+
+        if($opcode eq &TFTP_OPCODE_RRQ) {
+            $kernel->post($self->sender => tftpd_init => $client);
+            $kernel->post($self->sender => tftpd_send => $client);
+        }
     }
 
-    ### existing connection
+    elsif($opcode == &TFTP_OPCODE_ACK) {
+        if($client) {
+            $client->last_ack = unpack("n", $datagram);
+            $self->log(trace => $client, "last ack=" .$client->last_ack);
+            $kernel->post($self->sender => tftpd_send => $client);
+        }
+        else {
+            $client = POE::Component::TFTPd::Client->new($self, $args);
+            $kernel->yield(send_error => $client, 'no_connection');
+        }
+    }
+
+    elsif($opcode eq &TFTP_OPCODE_ERROR) {
+        $self->log(error => $client, $datagram);
+    }
+
     else {
-        $kernel->yield(decode => $client, $args->{'payload'});
+        $kernel->yield(send_error => $client, 'unknown_opcode', [$opcode]);
     }
 
     return;
@@ -211,21 +195,15 @@ sub start { #=================================================================
 
     my $self   = $_[OBJECT];
     my $kernel = $_[KERNEL];
-    my $sender = $_[SENDER];
-    my $events = $self->{'events'};
 
-    ### set default events
-    my $log      = $events->{'log'}      || 'log';
-    my $get_data = $events->{'get_data'} || 'get_data';
-
-    $self->{'_log'}      = sub { $kernel->post($sender, $log      => @_) };
-    $self->{'_get_data'} = sub { $kernel->post($sender, $get_data => @_) };
-    $self->{'_server'}   = POE::Wheel::UDP->new(
-                               Filter     => POE::Filter::Stream->new,
-                               LocalAddr  => $self->{'localaddr'},
-                               LocalPort  => $self->{'port'},
-                               InputEvent => 'input',
-                           );
+    $self->{'_sender'} = $_[SENDER];
+    $self->{'_kernel'} = $_[KERNEL];
+    $self->{'_server'} = POE::Wheel::UDP->new(
+                             Filter     => POE::Filter::Stream->new,
+                             LocalAddr  => $self->localaddr,
+                             LocalPort  => $self->port,
+                             InputEvent => 'input',
+                         );
 
     return;
 }
@@ -240,13 +218,15 @@ sub create { #================================================================
     my %args  = @_;
     my $self  = bless \%args, $class;
 
-    $self->{'alias'}   ||= 'TFTPd';
-    $self->{'timeout'} ||= 60;
-    $self->{'retries'} ||= 10;
-    $self->{'_clients'}  = {};
+    $self->{'alias'}    ||= 'TFTPd';
+    $self->{'timeout'}  ||= 60;
+    $self->{'retries'}  ||= 10;
+    $self->{'_clients'}   = {};
+    $self->{'_localaddr'} = delete $self->{'localaddr'};
+    $self->{'_port'}      = delete $self->{'port'};
 
     ### check required args
-    unless($self->{'localaddr'} and $self->{'port'}) {
+    unless($self->localaddr and $self->port) {
         die "Missing localaddr + port self\n";
     }
 
@@ -261,11 +241,10 @@ sub create { #================================================================
         },
         object_states => [
             $self => [ qw/
-                start           stop
-                new_connection  check_connections
-                input           decode
-                send_data       send_error
-                prepare_packet 
+                start      stop
+                send_data  send_error
+                input      init_request
+                check      completed
             / ],
         ],
     );
@@ -273,8 +252,11 @@ sub create { #================================================================
     return $self;
 }
 
-sub get_data          { my $o=shift; $o->{'_get_data'}->(@_) }
-sub log               { my $o=shift; $o->{'_log'}->(@_) }
+sub log { #===================================================================
+    my $self = shift;
+    $self->kernel->post($self->sender => tftpd_log => @_);
+}
+
 sub TFTP_MIN_BLKSIZE  { return 512;  }
 sub TFTP_MAX_BLKSIZE  { return 1428; }
 sub TFTP_MIN_TIMEOUT  { return 1;    }
@@ -290,8 +272,8 @@ sub TFTP_OPCODE_OACK  { return 6;    }
 BEGIN {
     no strict 'refs';
 
-    my @lvalue = qw/retries timeout/;
-    my @get    = qw/clients server/;
+    my @lvalue = qw/retries timeout max_connections/;
+    my @get    = qw/localaddr port clients server sender kernel/;
 
     for my $sub (@lvalue) {
         *$sub = sub :lvalue { shift->{$sub} };
@@ -322,15 +304,12 @@ Component constructor.
 
 Args:
 
- address =>
- port    =>
- timeout =>
- retries =>
- alias   => 
- events  => {
-    log      =>
-    get_data => 
- },
+ address        =>
+ port           =>
+ timeout        =>
+ retries        =>
+ alias          => 
+ max_connection => 
 
 =head2 clients
 
@@ -356,19 +335,16 @@ Pointer to the timeout in seconds:
  print $self->timeout;
  $self->timeout = 4;
 
-=head2 get_data
+=head2 max_connections
 
-Calls the SENDER with event name C<$arg-E<gt>{'events'}{'get_data'}>
-and $client as $_[ARG0].
+Pointer to max number of concurrent clients:
 
-The SENDER should then post back:
-
- $kernel->post($alias => $client, $data);
+ print $self->max_connections;
+ $self->max_connections = 4;
 
 =head2 log
 
-Calls the SENDER with event name C<$arg-E<gt>{'events'}{'log'}> and these
-arguments:
+Calls the SENDER with event name 'tftpd_log' and these arguments:
 
   $_[ARG0] = $level
   $_[ARG1] = $client
@@ -390,13 +366,26 @@ Starts the server, by setting up:
 
 Stops the TFTPd server.
 
-=head2 check_connections
+=head2 input
+
+Takes some input, figure out the opcode and pass the request on to the next
+stage.
+
+ rrq/rrw: init_request in current sesssion.
+ ack:     tftpd_data in sender session.
+
+=head2 init_request
+
+Checks if max_connection limit is reached. If not, sets up
+
+  $client->filename  = $file;    # the filename to read/write
+  $client->mode      = uc $mode; # only OCTET is valid
+  $client->rfc       = [ ... ];
+  $client->timestamp = time;
+
+=head2 check
 
 Checks for connections that have timed out, and destroys them.
-
-=head2 prepare_packet($client)
-
-Reads a some data, using C<get_data()>.
 
 =head2 send_data($client, $data)
 
@@ -406,18 +395,10 @@ Sends data to the client.
 
 Sends an error to the client.
 
-=head2 input
+=head2 completed
 
-Takes some input, and pass it on to either C<new_connection()> or C<decode()>,
-dependent if the client exists or not.
-
-=head2 new_connection
-
-Creates a new client-object, and puts it into the C<$self-E<gt>clients> hash.
-
-=head2 decode
-
-Decodes the messages from the client. It can only handle ACKs for now.
+Logs that the server is done with the client, and deletes the client from
+C<$self-E<gt>clients>.
 
 =head1 FUNCTIONS
 
@@ -445,7 +426,7 @@ Decodes the messages from the client. It can only handle ACKs for now.
 
 =head1 TODO
 
- * Handle more than ACK messages.
+ * Handle write requests
 
 =head1 AUTHOR
 
