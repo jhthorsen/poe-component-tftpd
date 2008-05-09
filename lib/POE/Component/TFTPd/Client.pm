@@ -14,12 +14,14 @@ my %defaults = (
     _port         => undef,
     _retries      => 0,
     _timestamp    => 0,
-    _last_ack     => 0,
+    _last_block   => 0,
     _block_size   => 0,
-    _opcode       => 0,
+    _rrq          => 0,
+    _wrq          => 0,
     _filename     => q(),
     _mode         => q(),
     _rfc          => [],
+    _almost_done  => 0,
 );
 
 for my $key (keys %defaults) {
@@ -57,19 +59,21 @@ See POE::Component::TFTPd
 
 =head1 METHODS
 
-=head2 new
-
+  name         => default
+  -----------------------
   id           => undef,
   address      => undef,
   port         => undef,
   retries      => 0,
   timestamp    => 0,
-  last_ack     => 0,
+  last_block   => 0,
   block_size   => 0,
-  opcode       => 0,
+  rrq          => 0,
+  wrq          => 0,
   filename     => q(),
   mode         => q(),
   rfc          => [],
+  almost_done  => 0,
 
 =head1 AUTHOR
 
