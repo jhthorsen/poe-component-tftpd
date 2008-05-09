@@ -1,8 +1,44 @@
 NAME
-    POE::Component::TFTPd - Starts a tftp-server, through POE
+    POE::Component::TFTPd - A tftp-server, implemented through POE
 
 VERSION
     0.01
+
+SYNOPSIS
+     POE::Session->create(
+         inline_states => {
+             _start        => sub {
+                 POE::Component::TFTPd->create;
+                 $_[KERNEL]->post($alias => 'start');
+             },
+             tftpd_init    => sub {
+                 my($client, $fh) = ($_[ARG0], undef);
+                 open($fh, "<", $client->filename) if($client->rrq);
+                 open($fh, ">", $client->filename) if($client->wrq);
+                 $client->{'fh'} = $fh;
+             },
+             tftpd_done    => sub {
+                 my $client = $_[ARG0];
+                 close $client->{'fh'};
+             },
+             tftpd_send    => sub {
+                 my $client = $_[ARG0];
+                 read $client->{'fh'}, my $data, $client->block_size;
+                 $_[KERNEL]->post($alias => send_data => $client, $data);
+             },
+             tftpd_receive => sub {
+                 my($client, $data) = @_[ARG0,ARG1];
+                 print { $client->{'fh'} } $data;
+                 $kernel->post($alias => send_ack => $client);
+             },
+             tftpd_log     => sub {
+                 my($level, $client, $msg) = @_[ARG0..ARG2];
+                 warn(sprintf "%s - %s:%i - %s\n",
+                     $level, $client->address, $client->port, $msg,
+                 );
+             },
+         },
+     );
 
 METHODS
   create(%args)
@@ -10,29 +46,29 @@ METHODS
 
     Args:
 
-     address =>
-     port    =>
-     timeout =>
-     retries =>
-     alias   => 
-     events  => {
-        log      =>
-        get_data => 
-     },
+     Name        => default   # Comment
+     --------------------------------------------------------------------
+     alias       => TFTPd     # Alias for the POE session
+     address     => 127.0.0.1 # Address to listen to
+     port        => 69        # Port to listen to
+     timeout     => 10        # Seconds between block sent and ACK
+     retries     => 3         # How many retries before giving up on host
+     max_clients => undef     # Maximum concurrent connections
 
   clients
     Returns a hash-ref, containing all the clients:
 
      $client_id => $client_obj
 
+    See "POE::Component::TFTPd::Client" for details
+
   server
-    Returns the server.
+    Returns the server: "POE::Wheel::UDP".
 
-  retries
-    Pointer to the number of retries:
-
-     print $self->retries;
-     $self->retries = 4;
+  cleanup
+     1. Logs that the server is done with the client
+     2. deletes the client from C<$self-E<gt>clients>
+     3. Calls C<tftpd_done> event in sender session
 
   timeout
     Pointer to the timeout in seconds:
@@ -40,56 +76,82 @@ METHODS
      print $self->timeout;
      $self->timeout = 4;
 
-  get_data
-    Calls the SENDER with event name "$arg->{'events'}{'get_data'}" and
-    $client as $_[ARG0].
+  retries
+    Pointer to the number of retries:
 
-    The SENDER should then post back:
+     print $self->retries;
+     $self->retries = 4;
 
-     $kernel->post($alias => $client, $data);
+  max_clients
+    Pointer to max number of concurrent clients:
+
+     print $self->max_clients;
+     $self->max_clients = 4;
 
   log
-    Calls the SENDER with event name "$arg->{'events'}{'log'}" and these
-    arguments:
+    Calls SENDER with event name 'tftpd_log' and these arguments:
 
       $_[ARG0] = $level
       $_[ARG1] = $client
       $_[ARG2] = $msg
 
-    $level is the same as "Log::Log4perl" use
+    $level is the same as "Log::Log4perl" use.
 
 EVENTS
   start
-    Starts the server, by setting up:
-
-     * POE::Wheel::UDP
-     * Postback for logging
-     * Postback for getting data
+    Starts the server, by setting up "POE::Wheel::UDP".
 
   stop
-    Stops the TFTPd server.
+    Stops the TFTPd server, by deleting the UDP wheel.
 
-  check_connections
-    Checks for connections that have timed out, and destroys them.
+  input => $udp_wheel_args
+    Takes some input, figure out the opcode and pass the request on to the
+    next stage.
 
-  prepare_packet($client)
-    Reads a some data, using "get_data()".
+     opcode | event    | method
+     -------|----------|-------------
+     rrq    | init_rrq | init_request
+     ack    | get_ack  | get_data
+     data   | get_data | get_data
 
-  send_data($client, $data)
-    Sends data to the client.
+  init_request => $args, $opcode, $data
+     1. Checks if max_clients limit is reached. If not, sets up
 
-  send_error($client, $error_key)
+      $client->filename  = $file;    # the filename to read/write
+      $client->mode      = uc $mode; # only OCTET is valid
+      $client->rfc       = [ ... ];
+      $client->timestamp = time;
+
+     2. Calls C<tftpd_init> in sender session.
+
+     3. Calls C<tftpd_send> in sender session, if read-request from client
+
+  send_data => $client, $data
+    Sends data to the client. Used for both ACK and DATA. It resends data
+    automatically on failure, and decreases "$client->retries".
+
+  send_error => $client, $error_key [, $args]
     Sends an error to the client.
 
-  input
-    Takes some input, and pass it on to either "new_connection()" or
-    "decode()", dependent if the client exists or not.
+     $error_key referes to C<%TFTP_ERROR>
+     $args is an array ref that can be used to replace %x in the error string
 
-  new_connection
-    Creates a new client-object, and puts it into the "$self->clients" hash.
+  get_data => $client, $data
+    Handles both ACK and DATA packets.
 
-  decode
-    Decodes the messages from the client. It can only handle ACKs for now.
+    If correct packet-number:
+
+     1. Logs the packet number
+     2. Calls C<tftpd_receive> / C<tftpd_send> in sender session
+
+    On failure:
+
+     1. Logs failure
+     2. Resends the last packet
+
+  check
+    Checks for connections that have timed out, and destroys them. This is
+    done periodically, every second.
 
 FUNCTIONS
   TFTP_MIN_BLKSIZE
@@ -104,7 +166,7 @@ FUNCTIONS
   TFTP_OPCODE_ERROR
   TFTP_OPCODE_OACK
 TODO
-     * Handle more than ACK messages.
+     * Handle write requests
 
 AUTHOR
     Jan Henning Thorsen, "<pm at flodhest.net>"

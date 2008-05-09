@@ -1,0 +1,15 @@
+---
+abstract: TFTPd as POE Component
+author: Jan Henning Thorsen
+distribution_type: module
+license: perl
+name: POE::Component::TFTPd
+version: 0.01
+no_index:
+  directory:
+    - examples
+    - t
+requires:
+  Test::Simple: 0.44
+  POE::Wheel::UDP: 0
+  POE::Filter::Stream: 0
