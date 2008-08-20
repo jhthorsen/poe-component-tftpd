@@ -503,6 +503,7 @@ stage.
  opcode | event    | method
  -------|----------|-------------
  rrq    | init_rrq | init_request
+ wrq    | init_wrq | init_request
  ack    | get_ack  | get_data
  data   | get_data | get_data
 
@@ -573,10 +574,6 @@ periodically, every second.
 =head2 TFTP_OPCODE_ERROR
 
 =head2 TFTP_OPCODE_OACK
-
-=head1 TODO
-
- * Handle write requests
 
 =head1 AUTHOR
 

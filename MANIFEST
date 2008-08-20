@@ -1,10 +1,21 @@
+Changes
+examples/tftpd.pl
+inc/Module/Install.pm
+inc/Module/Install/Base.pm
+inc/Module/Install/Can.pm
+inc/Module/Install/Fetch.pm
+inc/Module/Install/Makefile.pm
+inc/Module/Install/Metadata.pm
+inc/Module/Install/Win32.pm
+inc/Module/Install/WriteAll.pm
 lib/POE/Component/TFTPd.pm
 lib/POE/Component/TFTPd/Client.pm
-Changes
 LICENSE
 Makefile.PL
-MANIFEST
+MANIFEST			This list of files
+META.yml
 README
-examples/tftpd.pl
-t/001_load.t
-t/002_create.t
+t/00-load.t
+t/10-create.t
+t/20-pod-coverage.t
+t/20-pod.t

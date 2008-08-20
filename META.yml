@@ -1,15 +1,22 @@
----
-abstract: TFTPd as POE Component
-author: Jan Henning Thorsen
-distribution_type: module
-license: perl
-name: POE::Component::TFTPd
-version: 0.01
-no_index:
-  directory:
-    - examples
-    - t
-requires:
+--- 
+abstract: A tftp-server, implemented through POE
+author: 
+  - Jan Henning Thorsen, C<< <pm at flodhest.net> >>
+build_requires: 
   Test::Simple: 0.44
-  POE::Wheel::UDP: 0
+distribution_type: module
+generated_by: Module::Install version 0.68
+license: perl
+meta-spec: 
+  url: http://module-build.sourceforge.net/META-spec-v1.3.html
+  version: 1.3
+name: POE-Component-TFTPd
+no_index: 
+  directory: 
+    - examples
+    - inc
+    - t
+requires: 
   POE::Filter::Stream: 0
+  POE::Wheel::UDP: 0
+version: 0.01

@@ -111,6 +111,7 @@ EVENTS
      opcode | event    | method
      -------|----------|-------------
      rrq    | init_rrq | init_request
+     wrq    | init_wrq | init_request
      ack    | get_ack  | get_data
      data   | get_data | get_data
 
@@ -165,9 +166,6 @@ FUNCTIONS
   TFTP_OPCODE_ACK
   TFTP_OPCODE_ERROR
   TFTP_OPCODE_OACK
-TODO
-     * Handle write requests
-
 AUTHOR
     Jan Henning Thorsen, "<pm at flodhest.net>"
 

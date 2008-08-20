@@ -1,3 +1,4 @@
+#!perl
 
 use strict;
 use warnings;
@@ -12,7 +13,4 @@ my $server = POE::Component::TFTPd->create(
             );
 
 isa_ok($server, 'POE::Component::TFTPd');
-
-POE::Kernel->run;
-exit;
 
