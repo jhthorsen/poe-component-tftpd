@@ -3,7 +3,7 @@ abstract: A tftp-server, implemented through POE
 author: 
   - Jan Henning Thorsen, C<< <pm at flodhest.net> >>
 build_requires: 
-  Test::Simple: 0.44
+  Test::More: 0
 distribution_type: module
 generated_by: Module::Install version 0.68
 license: perl
