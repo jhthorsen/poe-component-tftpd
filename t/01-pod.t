@@ -1,5 +1,7 @@
 #!perl -T
 
+use Test::More;
+
 eval 'use Test::Pod 1.14';
 
 if($@) {

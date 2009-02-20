@@ -3,7 +3,7 @@
 use Test::More tests => 1;
 
 BEGIN {
-	use_ok( 'Var::State' );
+	use_ok( 'POE::Component::TFTPd' );
 }
 
-diag( "Testing Var::State $Var::State::VERSION, Perl $], $^X" );
+diag( "Testing POE::Component::TFTPd $POE::Component::TFTPd, Perl $], $^X" );
