@@ -63,7 +63,7 @@ our %TFTP_ERROR = (
     illegal_operation   => [4, "Illegal TFTP operation"],
     unknown_transfer_id => [5, "Unknown transfer ID"],
     file_exists         => [6, "File already exists"],
-    no_suck_user        => [7, "No such user"],
+    no_such_user        => [7, "No such user"],
 );
 
 =head1 METHODS
@@ -95,13 +95,7 @@ sub create {
     $self->{'port'}     ||= 69;
     $self->{'timeout'}  ||= 10;
     $self->{'retries'}  ||= 3;
-    $self->{'_clients'}   = {};
-    $self->{'_localaddr'} = delete $self->{'localaddr'};
-    $self->{'_port'}      = delete $self->{'port'};
-
-    unless($self->localaddr and $self->port) {
-        die "Missing localaddr + port self\n";
-    }
+    $self->{'clients'}    = {};
 
     POE::Session->create(
         inline_states => {
@@ -111,7 +105,7 @@ sub create {
             },
         },
         object_states => [
-            $self => [ qw/start stop send_error input check/ ],
+            $self => [ qw/start stop send_error input check_connections/ ],
             $self => {
                 init_rrq  => 'init_request',
                 init_wrq  => 'init_request',
@@ -134,16 +128,12 @@ Returns a hash-ref, containing all the clients:
 
 See C<POE::Component::TFTPd::Client> for details
 
-=head2 server
+=head2 max_clients
 
-Returns the server: C<POE::Wheel::UDP>.
+Pointer to max number of concurrent clients:
 
-=head2 timeout
-
-Pointer to the timeout in seconds:
-
- print $self->timeout;
- $self->timeout = 4;
+ print $self->max_clients;
+ $self->max_clients = 4;
 
 =head2 retries
 
@@ -152,20 +142,24 @@ Pointer to the number of retries:
  print $self->retries;
  $self->retries = 4;
 
-=head2 max_clients
+=head2 timeout
 
-Pointer to max number of concurrent clients:
+Pointer to the timeout in seconds:
 
- print $self->max_clients;
- $self->max_clients = 4;
+ print $self->timeout;
+ $self->timeout = 4;
+
+=head2 address
+
+Returns the address the server listens to.
+
+=head2 alias
+
+The alias for the POE session.
 
 =head2 kernel
 
 Method alias for C<$_[KERNEL]>.
-
-=head2 localaddr
-
-Returns the local address.
 
 =head2 port
 
@@ -175,20 +169,24 @@ Returns the local port
 
 Returns the sender session.
 
+=head2 server
+
+Returns the server: C<POE::Wheel::UDP>.
+
 =cut
 
 BEGIN {
     no strict 'refs';
 
     my @lvalue = qw/retries timeout max_clients/;
-    my @get    = qw/localaddr port clients server sender kernel/;
+    my @get    = qw/alias address port clients server sender kernel/;
 
     for my $sub (@lvalue) {
         *$sub = sub :lvalue { shift->{$sub} };
     }
 
     for my $sub (@get) {
-        *$sub = sub { return shift->{"_$sub"} };
+        *$sub = sub { shift->{$sub} };
     }
 }
 
@@ -205,8 +203,8 @@ sub cleanup {
     my $client = shift;
 
     $self->log(trace => $client, 'done');
-    delete $self->clients->{ $client->id };
     $self->kernel->post($self->sender => tftpd_done => $client);
+    delete $self->clients->{ $client->id };
 }
 
 =head2 log
@@ -238,14 +236,14 @@ sub start {
     my $self   = $_[OBJECT];
     my $kernel = $_[KERNEL];
 
-    $self->{'_sender'} = $_[SENDER];
-    $self->{'_kernel'} = $_[KERNEL];
-    $self->{'_server'} = POE::Wheel::UDP->new(
-                             Filter     => POE::Filter::Stream->new,
-                             LocalAddr  => $self->localaddr,
-                             LocalPort  => $self->port,
-                             InputEvent => 'input',
-                         );
+    $self->{'sender'} = $_[SENDER];
+    $self->{'kernel'} = $_[KERNEL];
+    $self->{'server'} = POE::Wheel::UDP->new(
+                            Filter     => POE::Filter::Stream->new,
+                            LocalAddr  => $self->address,
+                            LocalPort  => $self->port,
+                            InputEvent => 'input',
+                        );
 }
 
 =head2 stop
@@ -255,17 +253,17 @@ Stops the TFTPd server, by deleting the UDP wheel.
 =cut
 
 sub stop {
-    return delete $_[OBJECT]->{'_server'};
+    delete $_[OBJECT]->{'server'};
 }
 
-=head2 check
+=head2 check_connections
 
 Checks for connections that have timed out, and destroys them. This is done
 periodically, every second.
 
 =cut
 
-sub check {
+sub check_connections {
     my $self    = $_[OBJECT];
     my $kernel  = $_[KERNEL];
     my $clients = $self->clients;
@@ -273,20 +271,20 @@ sub check {
     CLIENT:
     for my $client (values %$clients) {
         if($client->retries <= 0) {
-            delete $clients->{ $client->id };
             $self->log(info => $client, 'timeout');
+            delete $clients->{ $client->id };
         }
         if($client->timestamp < time - $self->timeout) {
-            $client->retries--;
             $self->log(trace => $client, 'retry');
+            $client->retries--;
             $kernel->post($self->sender => tftpd_send => $client);
         }
     }
 
-    $kernel->delay(check => 1);
+    $kernel->delay(check_connections => 1);
 }
 
-=head2 input => $udp_wheel_args
+=head2 input
 
 Takes some input, figure out the opcode and pass the request on to the next
 stage.

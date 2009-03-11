@@ -15,19 +15,19 @@ use warnings;
 use POE::Component::TFTPd;
 
 my %defaults = (
-    _id           => undef,
-    _address      => undef,
-    _port         => undef,
-    _retries      => 0,
-    _timestamp    => 0,
-    _last_block   => 0,
-    _block_size   => 0,
-    _rrq          => 0,
-    _wrq          => 0,
-    _filename     => q(),
-    _mode         => q(),
-    _rfc          => [], # remember to override in new!
-    _almost_done  => 0,
+    id          => undef,
+    address     => undef,
+    port        => undef,
+    retries     => 0,
+    timestamp   => 0,
+    last_block  => 0,
+    block_size  => 0,
+    rrq         => 0,
+    wrq         => 0,
+    filename    => q(),
+    mode        => q(),
+    rfc         => [], # remember to override in new!
+    almost_done => 0,
 );
 
 =head1 METHODS
@@ -43,12 +43,12 @@ sub new {
 
     return bless {
         %defaults,
-        _id         => join(":", $client->{'addr'}, $client->{'port'}),
-        _address    => $client->{'addr'},
-        _port       => $client->{'port'},
-        _block_size => POE::Component::TFTPd::TFTP_MIN_BLKSIZE(),
-        _retries    => $tftpd->retries,
-        _rfc        => [],
+        id         => join(":", $client->{'addr'}, $client->{'port'}),
+        address    => $client->{'addr'},
+        port       => $client->{'port'},
+        block_size => POE::Component::TFTPd::TFTP_MIN_BLKSIZE(),
+        retries    => $tftpd->retries,
+        rfc        => [],
     }, $class;
 }
 
@@ -82,9 +82,8 @@ sub new {
 
 {
     no strict 'refs';
-    for my $key (keys %defaults) {
-        my($sub) = $key =~ /_(\w+)/;
-        *$sub    = sub :lvalue { shift->{$key} };
+    for my $sub (keys %defaults) {
+        *$sub = sub :lvalue { shift->{$sub} };
     }
 }
 
