@@ -8,4 +8,5 @@ requires      q(POE::Filter::Stream) => 0;
 test_requires q(Test::More)          => 0;
 no_index      q(directory)           => q(examples);
 
+auto_install;
 WriteAll;
