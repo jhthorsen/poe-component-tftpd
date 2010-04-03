@@ -6,7 +6,7 @@ POE::Component::TFTPd - A tftp-server, implemented through POE
 
 =head1 VERSION
 
-0.02
+0.01
 
 =head1 SYNOPSIS
 
@@ -52,7 +52,7 @@ use strict;
 use POE::Component::TFTPd::Client;
 use POE qw/Wheel::UDP Filter::Stream/;
 
-our $VERSION    = '0.02';
+our $VERSION = '0.01';
 our %TFTP_ERROR = (
     not_defined         => [0, "Not defined, see error message"],
     unknown_opcode      => [0, "Unknown opcode: %s"],
@@ -574,4 +574,5 @@ under the same terms as Perl itself.
 
 =cut
 
+1;
 1;

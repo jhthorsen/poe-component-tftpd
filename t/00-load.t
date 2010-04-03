@@ -1,9 +1,6 @@
-#!perl -T
-
-use Test::More tests => 1;
-
-BEGIN {
-	use_ok( 'POE::Component::TFTPd' );
-}
-
-diag( "Testing POE::Component::TFTPd $POE::Component::TFTPd, Perl $], $^X" );
+#!/usr/bin/perl
+use lib qw(lib);
+use Test::More;
+plan tests => 2;
+use_ok('POE::Component::TFTPd');
+use_ok('POE::Component::TFTPd::Client');
