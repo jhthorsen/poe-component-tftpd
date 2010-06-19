@@ -1,5 +1,14 @@
-Revision history for Perl module POE::Component::TFTPd
+Revision history for Perl module POE-Component-TFTPd
 
-0.01 Mon Apr 28 23:40:30 2008
+0.03     Sat Apr  3 13:16:32 CEST 2010
+     - Update t/
+     - Fixed repo structure
+
+0.02   Mon Mar 16 13:44:46 CET 2009
+     - Fix wrong event name: check
+     - Remove _ prefix from object attributes.
+     - Fix "check_connections" event (was not called)
+
+0.01   Mon Apr 28 23:40:30 CEST 2008
      - Commited first version of POE::Component::TFTPd
 
