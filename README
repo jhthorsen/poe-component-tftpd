@@ -98,6 +98,9 @@ METHODS
   server
     Returns the server: "POE::Wheel::UDP".
 
+  session
+    Returns this session.
+
   cleanup
      1. Logs that the server is done with the client
      2. deletes the client from C<$self-E<gt>clients>
@@ -182,9 +185,8 @@ FUNCTIONS
   TFTP_OPCODE_ERROR
   TFTP_OPCODE_OACK
 AUTHOR
-    Jan Henning Thorsen, "<pm at flodhest.net>"
+    Jan Henning Thorsen, "<jhthorsen-at-cpan-org>"
 
-ACKNOWLEDGEMENTS
 COPYRIGHT & LICENSE
     Copyright 2007 Jan Henning Thorsen, all rights reserved.
 
