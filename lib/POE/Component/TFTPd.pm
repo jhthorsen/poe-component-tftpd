@@ -6,7 +6,7 @@ POE::Component::TFTPd - A tftp-server, implemented through POE
 
 =head1 VERSION
 
-0.03
+0.0301
 
 =head1 SYNOPSIS
 
@@ -52,7 +52,7 @@ use strict;
 use POE::Component::TFTPd::Client;
 use POE qw/Wheel::UDP Filter::Stream/;
 
-our $VERSION = '0.03';
+our $VERSION = eval '0.0301';
 our %TFTP_ERROR = (
     not_defined         => [0, "Not defined, see error message"],
     unknown_opcode      => [0, "Unknown opcode: %s"],
@@ -363,6 +363,7 @@ sub send_data {
     elsif($opname eq 'ack') {
         $opcode = &TFTP_OPCODE_ACK;
         $data   = q();
+        $client->retries = $self->retries;
         $n      = $client->last_block;
         $done   = $client->almost_done;
     }
@@ -375,7 +376,6 @@ sub send_data {
 
     if($bytes) {
         $self->log(trace => $client, "sent $opname $n");
-        $client->retries   = $self->retries;
         $client->timestamp = time;
         $self->cleanup($client) if($done);
     }

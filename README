@@ -2,7 +2,7 @@ NAME
     POE::Component::TFTPd - A tftp-server, implemented through POE
 
 VERSION
-    0.03
+    0.0301
 
 SYNOPSIS
      POE::Session->create(
